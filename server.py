@@ -155,13 +155,14 @@ def cos_sim():
     server_recv_ts = time.time()
     # 接收base64编码的数据
     data_json = request.json
-
     # 解析 JSON，拿到 client_send_ts
     client_send_ts = data_json.get('client_send_ts', None)
     one_way_ms = server_recv_ts - client_send_ts
+
     data = base64.b64decode(data_json['data'])
     buffer = io.BytesIO(data)
     tensor_dict = torch.load(buffer, map_location='cpu')
+
     image_features = tensor_dict['image_features'].to(DEVICE)
     text_features = tensor_dict['text_features'].to(DEVICE)
     logit_scale = tensor_dict['logit_scale'].to(DEVICE)

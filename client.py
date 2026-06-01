@@ -225,14 +225,29 @@ def search_photo_by_description():
                 WHERE user_id = %s
             """
 
-    photo_records = db.execute_query(sql_read,(user_id,), logger)
-    if not photo_records:
-        return jsonify({"code": 0, "msg": "该用户没有图片记录"}), 200
+    try:
+        photo_records = db.execute_query(
+            sql_read,
+            (user_id,),
+            logger
+        )
 
+    except Exception:           #设计不好，异常捕获太过宽泛，不利于调试debug
+        return jsonify({
+            "code": 0,
+            "msg": "数据库查询失败"
+        }), 500
+
+    if (len(photo_records) == 0):
+        return jsonify({
+            "code": 0,
+            "msg": "该用户没有图片记录"
+        }), 200
         # 启动后台线程
         # 将获取到的 photo_records 和其他参数传递给后台处理函数
     thread = threading.Thread(
         target = func2_process,
+        # 此处有5个参数，但是声明的时候只有4个，少了一个user_id，是否是SQL语句有问题？
         args = (photo_records, description_list, description_id_list, user_id, logger)
     )
     thread.start()
