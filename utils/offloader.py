@@ -14,6 +14,8 @@ class OffloadHandler:
         self.config = config
         self.logger = logger or logging.getLogger('client')
 
+# 此处保留疑问，是不是多了个参数没有用到的（好像是为了控制卸载的层数，特别细的粒度，但是后续实现没有用到）
+# 变量命名考虑修改，原来是module_type加encoder_type，然后拼接起来，但是太容易错了，后面就改掉了，变成单一一个参数
     def should_offload(self, module_type: str, layer_id: int = None, ) -> bool:
         """
         判断当前模块是否需要卸载到服务器。
@@ -22,26 +24,27 @@ class OffloadHandler:
         key = module_type  # e.g. "visual_attn"
         return self.config.get(key, False)
 
-    def call_remote(self, endpoint: str, data_dict: dict, device: torch.device):
+    def call_remote(self, endpoint: str, data_dict: dict, device: torch.device, fallback_fn=None):
         """
         序列化数据 -> 发送请求 -> 反序列化结果
+        如果远程调用失败且提供了 fallback_fn，则降级执行本地计算。
         """
-        # 1. 序列化
-        buffer = io.BytesIO()
-        # 将 tensor 转为 cpu 以便序列化
-        cpu_data = {k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in data_dict.items()}
-        torch.save(cpu_data, buffer)
-        data_str = base64.b64encode(buffer.getvalue()).decode()
-
-        # 2. 发送请求
-        url = f"http://{self.server_ip}:{self.server_port}/{endpoint}"
-        payload = {
-            "data": data_str,
-            "client_send_ts": time.time()
-        }
-
-        t_start = time.perf_counter()
         try:
+            # 1. 序列化
+            buffer = io.BytesIO()
+            # 将 tensor 转为 cpu 以便序列化
+            cpu_data = {k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in data_dict.items()}
+            torch.save(cpu_data, buffer)
+            data_str = base64.b64encode(buffer.getvalue()).decode()
+
+            # 2. 发送请求
+            url = f"http://{self.server_ip}:{self.server_port}/{endpoint}"
+            payload = {
+                "data": data_str,
+                "client_send_ts": time.time()
+            }
+
+            t_start = time.perf_counter()
             resp = requests.post(url, json=payload, timeout=30)
             resp.raise_for_status()
             resp_json = resp.json()
@@ -59,6 +62,12 @@ class OffloadHandler:
             return output_dict['output'].to(device)
 
         except Exception as e:
+            if fallback_fn is not None:
+                if self.logger:
+                    self.logger.warning(
+                        "[%s] 远程调用失败，降级本地计算: %s", endpoint, e
+                    )
+                return fallback_fn()
             if self.logger:
                 self.logger.error(f"[{endpoint}] Failed: {e}")
-            raise e
+            raise

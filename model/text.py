@@ -31,6 +31,21 @@ class Transformer(nn.Module):
             for i in range(layers)
         ])
 
+    def _encoder_blocks_local(self, x: torch.Tensor):
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_start = time.perf_counter()
+        out = self.resblocks(x)
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[encoder_blocks] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return out
+
     def forward(self, x: torch.Tensor):
         # [卸载逻辑] 整个 ResBlocks 块级卸载 (中粒度)
         if self.offload_handler and self.offload_handler.should_offload('text_encoder'):
@@ -40,22 +55,10 @@ class Transformer(nn.Module):
                     'x': x,
                     'encoder_type': self.encoder_type
                 },
-                device=x.device
+                device=x.device,
+                fallback_fn=lambda: self._encoder_blocks_local(x)
             )
 
         # [本地计算]
         else:
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            t_infer_start = time.perf_counter()
-            out = self.resblocks(x)
-            # 记录推理结束时间
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            t_infer_end = time.perf_counter()
-            client_logger.info(
-                "[encoder_blocks] infer_ms=%.3f type=%s",
-                (t_infer_end - t_infer_start) * 1000,
-                "推理",
-            )
-            return out
+            return self._encoder_blocks_local(x)

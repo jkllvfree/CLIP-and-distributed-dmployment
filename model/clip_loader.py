@@ -140,6 +140,17 @@ class CLIP(nn.Module):
         #image = image.to(device=device, dtype=self.dtype)
         #return self.visual(image)
 
+    def _text_proj_local(self, x):
+        t_infer_start = time.perf_counter()
+        x = x @ self.text_projection
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[text_projection] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return x
+
     def encode_text(self, text):
         x = self.token_embedding(text).type(self.dtype)
         x = x + self.positional_embedding.type(self.dtype)
@@ -158,21 +169,44 @@ class CLIP(nn.Module):
             x = self.offload_handler.call_remote(
                 endpoint='text_projection',
                 data_dict={'x': x},
-                device=x.device
+                device=x.device,
+                fallback_fn=lambda: self._text_proj_local(x)
             )
         else:
-            # 记录开始时间
-            t_infer_start = time.perf_counter()
-            x = x @ self.text_projection
-            # 记录推理结束时间
-            t_infer_end = time.perf_counter()
-            client_logger.info(
-                "[text_projection] infer_ms=%.3f type=%s",
-                (t_infer_end - t_infer_start) * 1000,
-                "推理",
-            )
+            x = self._text_proj_local(x)
 
         return x
+
+    def _complete_encoders_local(self, image, text):
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_start = time.perf_counter()
+        image_features = self.encode_image(image)
+        text_features = self.encode_text(text)
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[complete_encoders] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return image_features, text_features
+
+    def _cos_sim_local(self, image_features, text_features, logit_scale):
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_start = time.perf_counter()
+        logits_per_image = logit_scale * image_features @ text_features.t()
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[cos_sim] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return logits_per_image
 
     def forward(self, image, text):
         # [卸载逻辑] 全量模型卸载
@@ -180,28 +214,15 @@ class CLIP(nn.Module):
             result = self.offload_handler.call_remote(
                 endpoint='complete_encoders',
                 data_dict={'image': image, 'text': text},
-                device=image.device
+                device=image.device,
+                fallback_fn=lambda: self._complete_encoders_local(image, text)
             )
             return result['logits_per_image'], result['logits_per_text']  # 假设返回字典
 
         # image_features = self.encode_image(image)
         # text_features = self.encode_text(text)
         else:
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            # 记录开始时间
-            t_infer_start = time.perf_counter()
-            image_features = self.encode_image(image)
-            text_features = self.encode_text(text)
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            # 记录推理结束时间
-            t_infer_end = time.perf_counter()
-            client_logger.info(
-                "[complete_encoders] infer_ms=%.3f type=%s",
-                (t_infer_end - t_infer_start) * 1000,
-                "推理",
-            )
+            image_features, text_features = self._complete_encoders_local(image, text)
 
         # normalized features
         image_features = image_features / image_features.norm(dim=1, keepdim=True)
@@ -219,23 +240,11 @@ class CLIP(nn.Module):
                     'text_features': text_features,
                     'logit_scale': logit_scale
                 },
-                device=image_features.device
+                device=image_features.device,
+                fallback_fn=lambda: self._cos_sim_local(image_features, text_features, logit_scale)
             )
         else:
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            # 记录开始时间
-            t_infer_start = time.perf_counter()
-            logits_per_image = logit_scale * image_features @ text_features.t()
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            # 记录推理结束时间
-            t_infer_end = time.perf_counter()
-            client_logger.info(
-                "[cos_sim] infer_ms=%.3f type=%s",
-                (t_infer_end - t_infer_start) * 1000,
-                "推理",
-            )
+            logits_per_image = self._cos_sim_local(image_features, text_features, logit_scale)
         logits_per_text = logits_per_image.t()
 
         return logits_per_image, logits_per_text

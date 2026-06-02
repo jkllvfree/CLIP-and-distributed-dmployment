@@ -120,36 +120,50 @@ class ResidualAttentionBlock(nn.Module):
         self.layer_id = layer_id
         self.encoder_type = encoder_type
 
+    def _attention_local(self, x: torch.Tensor):
+        t_infer_start = time.perf_counter()
+        out = self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[attention] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return out
+
     def attention(self, x: torch.Tensor):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
 
-        # 卸载逻辑
         if self.offload_handler and self.offload_handler.should_offload('attention', self.layer_id, self.encoder_type):
             return self.offload_handler.call_remote(
                 endpoint='attention',
-                data={'x': x,
+                data_dict={'x': x,
                       'attn_mask': self.attn_mask,
                       'layer_id': self.layer_id,
                       'encoder_type': self.encoder_type
                 },
-                device = x.device
+                device=x.device,
+                fallback_fn=lambda: self._attention_local(x)
             )
         else:
-            # 记录开始时间
-            t_infer_start = time.perf_counter()
-            # 本地计算，Q,K,V 都是 x，返回值是一个元组，第一个元素是注意力输出
-            out = self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
-            # 记录推理结束时间
-            t_infer_end = time.perf_counter()
-            client_logger.info(
-                "[attention] infer_ms=%.3f type=%s",
-                (t_infer_end - t_infer_start) * 1000,
-                "推理",
-            )
+            return self._attention_local(x)
 
-            return out
+    def _mlp_local(self, x: torch.Tensor):
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_start = time.perf_counter()
+        out = self.mlp(x)
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[mlp] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return out
 
-    def mlp_forward(self,x:torch.Tensor):
+    def mlp_forward(self, x: torch.Tensor):
         if self.offload_handler and self.offload_handler.should_offload('mlp', self.layer_id, self.encoder_type):
             return self.offload_handler.call_remote(
                 endpoint='mlp',
@@ -158,24 +172,11 @@ class ResidualAttentionBlock(nn.Module):
                     'layer_id': self.layer_id,
                     'encoder_type': self.encoder_type
                 },
-                device=x.device
+                device=x.device,
+                fallback_fn=lambda: self._mlp_local(x)
             )
         else:
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            # 记录开始时间
-            t_infer_start = time.perf_counter()
-            out = self.mlp(x)
-            # 记录推理结束时间
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            t_infer_end = time.perf_counter()
-            client_logger.info(
-                "[mlp] infer_ms=%.3f type=%s",
-                (t_infer_end - t_infer_start) * 1000,
-                "推理",
-            )
-            return out
+            return self._mlp_local(x)
 
     def forward(self, x: torch.Tensor):
         x = x + self.attention(self.ln_1(x))

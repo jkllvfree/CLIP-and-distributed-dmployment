@@ -40,6 +40,36 @@ class VisionTransformer(nn.Module):
 
         self.offload_handler = offload_handler
 
+    def _conv_local(self, x: torch.Tensor):
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_start = time.perf_counter()
+        x = self.conv1(x)
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[vision_conv] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return x
+
+    def _proj_local(self, x: torch.Tensor):
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_start = time.perf_counter()
+        x = x @ self.proj
+        if DEVICE.type == 'cuda':
+            torch.cuda.synchronize()
+        t_infer_end = time.perf_counter()
+        client_logger.info(
+            "[visual_projection] infer_ms=%.3f type=%s",
+            (t_infer_end - t_infer_start) * 1000,
+            "推理",
+        )
+        return x
+
     def forward(self, x: torch.Tensor):
         #图像块嵌入
         # [卸载逻辑] Vision Conv1
@@ -47,23 +77,11 @@ class VisionTransformer(nn.Module):
             x = self.offload_handler.call_remote(
                 endpoint='vision_conv',
                 data_dict={'x': x},
-                device=x.device
+                device=x.device,
+                fallback_fn=lambda: self._conv_local(x)
             )
         else:
-            # 记录开始时间
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            t_infer_start = time.perf_counter()
-            x = self.conv1(x)  # shape = [*, width, grid, grid]
-            # 记录推理结束时间
-            if DEVICE.type == 'cuda':
-                torch.cuda.synchronize()
-            t_infer_end = time.perf_counter()
-            client_logger.info(
-                "[vision_conv] infer_ms=%.3f type=%s",
-                (t_infer_end - t_infer_start)*1000,
-                "推理",
-            )
+            x = self._conv_local(x)
 
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -92,23 +110,11 @@ class VisionTransformer(nn.Module):
                 x = self.offload_handler.call_remote(
                     endpoint='visual_projection',
                     data_dict={'x': x},
-                    device=x.device
+                    device=x.device,
+                    fallback_fn=lambda: self._proj_local(x)
                 )
             else:
-                # 记录开始时间
-                if DEVICE.type == 'cuda':
-                    torch.cuda.synchronize()
-                t_infer_start = time.perf_counter()
-                x = x @ self.proj
-                # 记录推理结束时间
-                if DEVICE.type == 'cuda':
-                    torch.cuda.synchronize()
-                t_infer_end = time.perf_counter()
-                client_logger.info(
-                    "[visual_projection] infer_ms=%.3f type=%s",
-                    (t_infer_end - t_infer_start) * 1000,
-                    "推理",
-                )
+                x = self._proj_local(x)
 
         return x
 
