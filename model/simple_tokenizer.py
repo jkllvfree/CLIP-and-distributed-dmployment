@@ -6,14 +6,16 @@ from functools import lru_cache
 import ftfy
 import regex as re
 
+# 学了NLP后，终于看明白了所有过程了
 
+# 这个函数，只是为了找到BPE词表文件的位置
 @lru_cache()
 def default_bpe():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "bpe_simple_vocab_16e6.txt.gz")
 
 #返回 UTF-8 字节列表及其对应的 Unicode 字符串列表。
 # 可逆 BPE 编码基于 Unicode 字符串工作
-# —— 这意味着若要避免出现未识别字符（UNK），
+# —— 这意味着若要避免出现未识别字符（UNK），        （OOV问题，out of vocabulary）
 # 你的词汇表中需要包含大量 Unicode 字符。
 # 例如，当处理约 100 亿词的数据集时，通常需要约 5000 个 Unicode 字符才能实现良好的覆盖度，
 # 这在常规的 32K 规模 BPE 词汇表中占比相当显著。
@@ -39,17 +41,17 @@ def get_pairs(word):
     pairs = set()
     prev_char = word[0]
     for char in word[1:]:
-        pairs.add((prev_char, char))
+        pairs.add((prev_char, char))               # 有点像是反转链表，循环更新，同时每次更新一个pre
         prev_char = char
     return pairs
 
 
 def basic_clean(text):
-    text = ftfy.fix_text(text)
+    text = ftfy.fix_text(text)               # 修复乱码
     text = html.unescape(html.unescape(text))
     return text.strip()
 
-
+# 将多个空格，变成一个空格
 def whitespace_clean(text):
     text = re.sub(r'\s+', ' ', text)
     text = text.strip()
@@ -118,8 +120,8 @@ class SimpleTokenizer(object):
     def encode(self, text):
         bpe_tokens = []
         text = whitespace_clean(basic_clean(text)).lower()
-        for token in re.findall(self.pat, text):
-            token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))
+        for token in re.findall(self.pat, text):              # 正则切分
+            token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))        #utf编码
             bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
         return bpe_tokens
 
