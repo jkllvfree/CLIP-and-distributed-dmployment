@@ -17,7 +17,6 @@ from utils.pred import predict
 import manager.db_manager as db
 from utils import config as cfg
 
-from utils.speed_measurement import run_timed_inference
 
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
@@ -29,23 +28,16 @@ DEVICE, local_ip, server_ip = get_device_and_ip()
 logger = logging.getLogger('client')
 logger = configure_logger(logger, __file__, propagate=False)
 
-# 1. 加载完整模型 (不传 handler，即纯本地)
 state_dict = torch.jit.load('ViT-L-14.pt', map_location='cpu').state_dict()
-model = build_model(state_dict, offload_handler=None).to(DEVICE)  # 假设服务端用 CUDA
 
-# 2. 拆解组件
-#COMPONENTS = extract_model_components(full_model)
-
-# model = build_model(state_dict).to(DEVICE)
-
-# 2. 准备卸载处理器
 offloader = OffloadHandler(
     server_ip=cfg.SERVER_IP,
     server_port=cfg.SERVER_PORT,
     config=cfg.OFFLOAD_CONFIG,
     logger=logger
 )
-model_explict = build_model(state_dict, offload_handler=offloader).to(DEVICE).eval()
+
+model = build_model(state_dict, offload_handler=offloader).to(DEVICE).eval()
 
 print("模型加载完成")
 
@@ -70,7 +62,7 @@ def predict_():
         return jsonify({"error": "class_names 必须是非空列表"}), 400
 
     try:
-        logits_per_image, _ = predict(model_explict, image_urls, class_names)
+        logits_per_image, _ = predict(model, image_urls, class_names)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

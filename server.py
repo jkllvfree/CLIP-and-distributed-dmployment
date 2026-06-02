@@ -7,7 +7,6 @@ from flask import Flask, request, jsonify
 import torch
 import base64
 import io
-from utils.offloader import OffloadHandler
 from model.clip_loader import build_model
 from utils import config
 from utils.setup import get_device_and_ip,configure_logger
@@ -31,24 +30,6 @@ logger = configure_logger(logger, __file__, propagate=False)
 state_dict = torch.jit.load('ViT-L-14.pt', map_location='cpu').state_dict()
 model = build_model(state_dict, offload_handler=None).to(DEVICE)  # 假设服务端用 CUDA
 
-# 2. 拆解组件
-#COMPONENTS = extract_model_components(full_model)
-
-# model = build_model(state_dict).to(DEVICE)
-
-# 2. 准备卸载处理器
-offloader = OffloadHandler(
-    server_ip=cfg.SERVER_IP,
-    server_port=cfg.SERVER_PORT,
-    config=cfg.OFFLOAD_CONFIG,
-    logger=logger
-)
-
-model_explict = build_model(state_dict, offload_handler=offloader).to(DEVICE)
-
-
-model = model.to(DEVICE)
-model = model.eval()
 print("模型加载完成")
 
 # 残差块的注意力机制与MLP
