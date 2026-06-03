@@ -100,8 +100,8 @@ def attention():
 
     x = tensor_dict['x'].to(DEVICE) # 输入的张量
     encoder_type = tensor_dict['encoder_type'] # 文本编码器 or 视觉编码器
-    block_num = tensor_dict['block_num'] # 第几个残差块
-    attn = attns[encoder_type][block_num] # 提取对应的attention模块
+    layer_id = tensor_dict['layer_id']  # 第几个残差块
+    attn = attns[encoder_type][layer_id]  # 提取对应的attention模块
     attn_mask = tensor_dict['attn_mask']
     if attn_mask is not None:
         attn_mask = attn_mask.to(DEVICE)
@@ -180,8 +180,8 @@ def mlp():
 
     x = tensor_dict['x'].to(DEVICE)  # 输入的张量
     encoder_type = tensor_dict['encoder_type']  # 文本编码器 or 视觉编码器
-    block_num = tensor_dict['block_num']  # 第几个残差块
-    mlp = mlps[encoder_type][block_num]  # 提取对应的mlp模块
+    layer_id = tensor_dict['layer_id']  # 第几个残差块
+    mlp = mlps[encoder_type][layer_id]  # 提取对应的mlp模块
 
     output = run_timed_inference(
         tag="mlp",

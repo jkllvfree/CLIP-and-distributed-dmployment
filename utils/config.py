@@ -17,6 +17,12 @@ DB_CONFIG = {
     "charset": "utf8mb4"
 }
 
+# TODO: 后续可扩展为逐层粒度的卸载控制。
+#       当前为模块级粒度（如 visual_attn 控制所有24层视觉attention的卸载）。
+#       若需要精确控制到某层（如只卸载 visual_attn_5），可增加 per-layer 环境变量：
+#         OFFLOAD_VISUAL_ATTN_5=true
+#         OFFLOAD_TEXT_MLP_0=true
+#       并在 OffloadHandler.should_offload() 中拼接细粒度 key 进行查询。
 OFFLOAD_CONFIG = {
     'visual_attn': os.getenv("OFFLOAD_VISUAL_ATTN", 'false').lower() == 'true',
     'visual_mlp': os.getenv("OFFLOAD_VISUAL_MLP", 'false').lower() == 'true',

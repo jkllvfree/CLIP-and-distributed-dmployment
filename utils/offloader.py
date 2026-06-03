@@ -14,15 +14,25 @@ class OffloadHandler:
         self.config = config
         self.logger = logger or logging.getLogger('client')
 
-# 此处保留疑问，是不是多了个参数没有用到的（好像是为了控制卸载的层数，特别细的粒度，但是后续实现没有用到）
-# 变量命名考虑修改，原来是module_type加encoder_type，然后拼接起来，但是太容易错了，后面就改掉了，变成单一一个参数
-    def should_offload(self, module_type: str, layer_id: int = None, ) -> bool:
+    def should_offload(self, module_type: str) -> bool:
         """
         判断当前模块是否需要卸载到服务器。
-        例如: module_type='attn', encoder_type='visual'
+
+        参数:
+            module_type: 模块标识，对应 OFFLOAD_CONFIG 中的 key，
+                        如 'visual_attn' / 'text_mlp' / 'vision_conv' / 'complete_encoders' 等
+
+        TODO: 后续可扩展为逐层粒度的卸载控制。
+              方案思路：
+              1. 增加 layer_id: int 和 encoder_type: str 参数
+              2. 拼接 key = f"{encoder_type}_{module_type}_{layer_id}"
+                 （如 visual_attn_5 表示只卸载视觉编码器第5层attention）
+              3. 在 OFFLOAD_CONFIG 中增加 per-layer 环境变量
+                 （如 OFFLOAD_VISUAL_ATTN_5）
+              4. 查询时优先查细粒度 key，未命中则回落粗粒度 key
+              当前设计为模块级粒度（如 visual_attn 整体卸载）。
         """
-        key = module_type  # e.g. "visual_attn"
-        return self.config.get(key, False)
+        return self.config.get(module_type, False)
 
     def call_remote(self, endpoint: str, data_dict: dict, device: torch.device, fallback_fn=None):
         """

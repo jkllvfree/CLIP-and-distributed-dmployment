@@ -131,7 +131,7 @@ class ResidualAttentionBlock(nn.Module):
     def attention(self, x: torch.Tensor):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
 
-        if self.offload_handler and self.offload_handler.should_offload('attention', self.layer_id, self.encoder_type):
+        if self.offload_handler and self.offload_handler.should_offload(f"{self.encoder_type}_attn"):
             return self.offload_handler.call_remote(
                 endpoint='attention',
                 data_dict={'x': x,
@@ -155,7 +155,7 @@ class ResidualAttentionBlock(nn.Module):
         )
 
     def mlp_forward(self, x: torch.Tensor):
-        if self.offload_handler and self.offload_handler.should_offload('mlp', self.layer_id, self.encoder_type):
+        if self.offload_handler and self.offload_handler.should_offload(f"{self.encoder_type}_mlp"):
             return self.offload_handler.call_remote(
                 endpoint='mlp',
                 data_dict={
