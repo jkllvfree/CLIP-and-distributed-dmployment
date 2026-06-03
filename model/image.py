@@ -1,4 +1,3 @@
-import time
 from collections import OrderedDict
 from typing import Tuple, Union
 import torch
@@ -7,6 +6,7 @@ from model.encoder import LayerNorm, AttentionPool2d, Bottleneck, ResidualAttent
 # 假设 Bottleneck 在 encoder 里，这里省略 Bottleneck 具体代码以免太长，逻辑同 ResNet
 from model.text import Transformer
 from utils.setup import configure_logger
+from utils.speed_measurement import run_timed_inference
 import logging
 
 client_logger = logging.getLogger('client')
@@ -41,34 +41,22 @@ class VisionTransformer(nn.Module):
         self.offload_handler = offload_handler
 
     def _conv_local(self, x: torch.Tensor):
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_start = time.perf_counter()
-        x = self.conv1(x)
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_end = time.perf_counter()
-        client_logger.info(
-            "[vision_conv] infer_ms=%.3f type=%s",
-            (t_infer_end - t_infer_start) * 1000,
-            "推理",
+        return run_timed_inference(
+            tag="vision_conv",
+            logger=client_logger,
+            device=DEVICE,
+            infer_func=lambda: self.conv1(x),
+            sync_cuda=True,
         )
-        return x
 
     def _proj_local(self, x: torch.Tensor):
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_start = time.perf_counter()
-        x = x @ self.proj
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_end = time.perf_counter()
-        client_logger.info(
-            "[visual_projection] infer_ms=%.3f type=%s",
-            (t_infer_end - t_infer_start) * 1000,
-            "推理",
+        return run_timed_inference(
+            tag="visual_projection",
+            logger=client_logger,
+            device=DEVICE,
+            infer_func=lambda: x @ self.proj,
+            sync_cuda=True,
         )
-        return x
 
     def forward(self, x: torch.Tensor):
         #图像块嵌入

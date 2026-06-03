@@ -1,10 +1,9 @@
-import time
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 from utils.setup import configure_logger
+from utils.speed_measurement import run_timed_inference
 from typing import Optional
 
 import logging
@@ -121,15 +120,13 @@ class ResidualAttentionBlock(nn.Module):
         self.encoder_type = encoder_type
 
     def _attention_local(self, x: torch.Tensor):
-        t_infer_start = time.perf_counter()
-        out = self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
-        t_infer_end = time.perf_counter()
-        client_logger.info(
-            "[attention] infer_ms=%.3f type=%s",
-            (t_infer_end - t_infer_start) * 1000,
-            "推理",
+        return run_timed_inference(
+            tag="attention",
+            logger=client_logger,
+            device=DEVICE,
+            infer_func=lambda: self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0],
+            sync_cuda=False,
         )
-        return out
 
     def attention(self, x: torch.Tensor):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
@@ -149,19 +146,13 @@ class ResidualAttentionBlock(nn.Module):
             return self._attention_local(x)
 
     def _mlp_local(self, x: torch.Tensor):
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_start = time.perf_counter()
-        out = self.mlp(x)
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_end = time.perf_counter()
-        client_logger.info(
-            "[mlp] infer_ms=%.3f type=%s",
-            (t_infer_end - t_infer_start) * 1000,
-            "推理",
+        return run_timed_inference(
+            tag="mlp",
+            logger=client_logger,
+            device=DEVICE,
+            infer_func=lambda: self.mlp(x),
+            sync_cuda=True,
         )
-        return out
 
     def mlp_forward(self, x: torch.Tensor):
         if self.offload_handler and self.offload_handler.should_offload('mlp', self.layer_id, self.encoder_type):

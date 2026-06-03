@@ -1,10 +1,9 @@
 # --- START OF FILE inference/models/text.py ---
-import time
-
 import torch
 import torch.nn as nn
 from model.encoder import ResidualAttentionBlock, LayerNorm
 from utils.setup import configure_logger
+from utils.speed_measurement import run_timed_inference
 import logging
 
 client_logger = logging.getLogger('client')
@@ -32,19 +31,13 @@ class Transformer(nn.Module):
         ])
 
     def _encoder_blocks_local(self, x: torch.Tensor):
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_start = time.perf_counter()
-        out = self.resblocks(x)
-        if DEVICE.type == 'cuda':
-            torch.cuda.synchronize()
-        t_infer_end = time.perf_counter()
-        client_logger.info(
-            "[encoder_blocks] infer_ms=%.3f type=%s",
-            (t_infer_end - t_infer_start) * 1000,
-            "推理",
+        return run_timed_inference(
+            tag="encoder_blocks",
+            logger=client_logger,
+            device=DEVICE,
+            infer_func=lambda: self.resblocks(x),
+            sync_cuda=True,
         )
-        return out
 
     def forward(self, x: torch.Tensor):
         # [卸载逻辑] 整个 ResBlocks 块级卸载 (中粒度)
